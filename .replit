@@ -34,5 +34,5 @@ localPort = 5000
 externalPort = 80
 
 [deployment]
-deploymentTarget = "autoscale"
-run = ["gunicorn", "--bind=0.0.0.0:5000", "--reuse-port", "main:app"]
+deploymentTarget = "cloudrun"
+run = ["sh", "-c", "gunicorn --bind=0.0.0.0:5000 --reuse-port main:app"]
