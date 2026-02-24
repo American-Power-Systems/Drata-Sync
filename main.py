@@ -205,6 +205,20 @@ def push_to_drata_custom_connection(records: List[Dict[str, Any]]) -> Dict[str, 
     return {"ok": True, "sent": len(records), "drata_response": body, "url_used": url}
 
 
+@app.get("/")
+def index():
+    return jsonify({
+        "service": "APS Drata Training Sync",
+        "status": "running",
+        "endpoints": {
+            "GET /health": "Liveness check",
+            "POST /training/import": "Normalize and store records (no Drata push)",
+            "POST /sync": "Normalize, store, and push to Drata",
+            "GET /records": "List all stored training completion records",
+        }
+    })
+
+
 @app.get("/health")
 def health():
     return jsonify({"ok": True, "time": utc_now_iso()})
