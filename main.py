@@ -1,10 +1,11 @@
 import os
 import json
 import csv
-import time
 from datetime import datetime, timezone
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 
+import psycopg2
+import psycopg2.extras
 import requests
 from flask import Flask, request, jsonify
 
@@ -18,6 +19,14 @@ DRATA_DATASOURCE_ID = os.getenv("DRATA_DATASOURCE_ID", "").strip()
 CSV_PATH = os.getenv("TRAINING_CSV_PATH", "training_completions.csv").strip()
 
 APP_AUTH_TOKEN = os.getenv("APP_AUTH_TOKEN", "").strip()
+
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+
+
+def get_db():
+    conn = psycopg2.connect(DATABASE_URL)
+    conn.autocommit = True
+    return conn
 
 
 def require_auth():
@@ -90,6 +99,51 @@ def load_records_from_csv(path: str) -> List[Dict[str, Any]]:
     return out
 
 
+def save_records_to_db(records: List[Dict[str, Any]]) -> Dict[str, Any]:
+    if not records:
+        return {"inserted": 0, "updated": 0}
+
+    conn = get_db()
+    cur = conn.cursor()
+    inserted = 0
+    updated = 0
+
+    for rec in records:
+        cur.execute("""
+            INSERT INTO training_completions
+                (employee_email, employee_name, training_name, status,
+                 completed_at, expiration_date, proof_text, source, synced_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
+            ON CONFLICT (employee_email, training_name, completed_at)
+            DO UPDATE SET
+                employee_name = EXCLUDED.employee_name,
+                status = EXCLUDED.status,
+                expiration_date = EXCLUDED.expiration_date,
+                proof_text = EXCLUDED.proof_text,
+                source = EXCLUDED.source,
+                synced_at = NOW()
+            RETURNING (xmax = 0) AS is_insert
+        """, (
+            rec["employee_email"],
+            rec.get("employee_name", ""),
+            rec["training_name"],
+            rec.get("status", ""),
+            rec.get("completed_at"),
+            rec.get("expiration_date"),
+            rec.get("proof_text", ""),
+            rec.get("source", ""),
+        ))
+        row = cur.fetchone()
+        if row and row[0]:
+            inserted += 1
+        else:
+            updated += 1
+
+    cur.close()
+    conn.close()
+    return {"inserted": inserted, "updated": updated}
+
+
 def drata_headers() -> Dict[str, str]:
     if not DRATA_API_KEY:
         raise RuntimeError("Missing DRATA_API_KEY (set it in Replit Secrets).")
@@ -154,7 +208,14 @@ def training_import():
         except Exception as e:
             errors.append({"index": i, "error": str(e), "record": rec})
 
-    return jsonify({"imported": len(normalized), "errors": errors, "normalized_preview": normalized[:5]})
+    db_result = save_records_to_db(normalized)
+
+    return jsonify({
+        "imported": len(normalized),
+        "db": db_result,
+        "errors": errors,
+        "normalized_preview": normalized[:5],
+    })
 
 
 @app.post("/sync")
@@ -183,17 +244,49 @@ def sync():
         except Exception as e:
             errors.append({"index": i, "error": str(e), "record": rec})
 
+    db_result = save_records_to_db(normalized)
+
     try:
-        result = push_to_drata_custom_connection(normalized)
+        drata_result = push_to_drata_custom_connection(normalized)
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e), "normalized": len(normalized), "errors": errors}), 500
+        return jsonify({"ok": False, "error": str(e), "normalized": len(normalized), "db": db_result, "errors": errors}), 500
 
     return jsonify({
-        "ok": result.get("ok", False),
+        "ok": drata_result.get("ok", False),
         "normalized": len(normalized),
+        "db": db_result,
         "errors": errors,
-        "drata": result,
+        "drata": drata_result,
     })
+
+
+@app.get("/records")
+def get_records():
+    maybe = require_auth()
+    if maybe:
+        return maybe
+
+    conn = get_db()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute("""
+        SELECT id, employee_email, employee_name, training_name, status,
+               completed_at, expiration_date, proof_text, source, synced_at, created_at
+        FROM training_completions
+        ORDER BY created_at DESC
+    """)
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    records = []
+    for row in rows:
+        record = dict(row)
+        for key in ["completed_at", "expiration_date", "synced_at", "created_at"]:
+            if record.get(key) and hasattr(record[key], "isoformat"):
+                record[key] = record[key].isoformat()
+        records.append(record)
+
+    return jsonify({"count": len(records), "records": records})
 
 
 if __name__ == "__main__":
