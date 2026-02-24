@@ -11,10 +11,8 @@ from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
-DRATA_API_KEY = os.getenv("DRATA_API_KEY", "").strip()
-DRATA_BASE_URL = os.getenv("DRATA_BASE_URL", "https://api.drata.com").strip()
-DRATA_WORKSPACE_ID = os.getenv("DRATA_WORKSPACE_ID", "").strip()
-DRATA_DATASOURCE_ID = os.getenv("DRATA_DATASOURCE_ID", "").strip()
+def get_config(key, default=""):
+    return os.getenv(key, default).strip()
 
 CSV_PATH = os.getenv("TRAINING_CSV_PATH", "training_completions.csv").strip()
 
@@ -149,10 +147,11 @@ def save_records_to_db(records: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 def drata_headers() -> Dict[str, str]:
-    if not DRATA_API_KEY:
+    api_key = get_config("DRATA_API_KEY")
+    if not api_key:
         raise RuntimeError("Missing DRATA_API_KEY (set it in Replit Secrets).")
     return {
-        "Authorization": f"Bearer {DRATA_API_KEY}",
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
         "Accept": "application/json",
     }
@@ -160,6 +159,7 @@ def drata_headers() -> Dict[str, str]:
 
 def build_drata_payload(rec: Dict[str, Any]) -> Dict[str, Any]:
     return {
+        "id": rec["employee_email"],
         "employee_email": rec["employee_email"],
         "displayName": rec.get("displayName", rec.get("employee_name", "")),
         "employee_name": rec.get("employee_name", ""),
@@ -171,14 +171,18 @@ def build_drata_payload(rec: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def push_to_drata_custom_connection(records: List[Dict[str, Any]]) -> Dict[str, Any]:
-    if not DRATA_WORKSPACE_ID or not DRATA_DATASOURCE_ID:
+    base_url = get_config("DRATA_BASE_URL", "https://public-api.drata.com")
+    connection_id = get_config("DRATA_CONNECTION_ID", "12")
+    resource_id = get_config("DRATA_RESOURCE_ID", "1")
+
+    if not connection_id or not resource_id:
         return {
             "ok": False,
-            "error": "Missing DRATA_WORKSPACE_ID or DRATA_DATASOURCE_ID. Set these in Replit Secrets once you know them.",
+            "error": "Missing DRATA_CONNECTION_ID or DRATA_RESOURCE_ID. Set these in Replit Secrets.",
             "sent": 0,
         }
 
-    url = f"{DRATA_BASE_URL}/public/custom-connections/{DRATA_DATASOURCE_ID}/sync"
+    url = f"{base_url}/public/custom-connections/{connection_id}/resources/{resource_id}/records"
 
     drata_records = [build_drata_payload(r) for r in records]
     payload = {"data": drata_records}
