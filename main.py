@@ -32,59 +32,46 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def normalize_record(rec: Dict[str, Any]) -> Dict[str, Any]:
-    email = (rec.get("employee_email") or rec.get("email") or "").strip().lower()
+def normalize_record(rec):
+    email = rec.get("employee_email", "").strip().lower()
     if not email:
-        raise ValueError("Missing employee email")
+        raise ValueError("Missing employee_email")
 
-    training_name = (rec.get("training_name") or rec.get("course") or "Security Training").strip()
+    status = rec.get("status", "").strip()
+    completed_raw = rec.get("completed_at", "").strip()
+    expiration_raw = rec.get("expiration_date", "").strip()
 
-    completed_at = rec.get("completed_at") or rec.get("completion_date") or rec.get("completedAt")
-    if not completed_at:
-        raise ValueError(f"Missing completed_at for {email}")
+    completed_iso = None
+    if completed_raw and completed_raw != "-":
+        completed_iso = parse_date_to_iso(completed_raw)
 
-    completed_iso = parse_date_to_iso(completed_at)
-
-    proof_url = (rec.get("proof_url") or rec.get("certificate_url") or rec.get("proofUrl") or "").strip()
-    proof_text = (rec.get("proof_text") or rec.get("proofText") or "").strip()
-
-    status = (rec.get("status") or "completed").strip().lower()
+    expiration_iso = None
+    if expiration_raw and expiration_raw != "-":
+        expiration_iso = parse_date_to_iso(expiration_raw)
 
     return {
         "employee_email": email,
-        "training_name": training_name,
-        "completed_at": completed_iso,
+        "employee_name": rec.get("employee_name", ""),
+        "training_name": "APS Security Awareness Training",
         "status": status,
-        "proof_url": proof_url,
-        "proof_text": proof_text,
-        "source": rec.get("source", "replit-sync"),
-        "synced_at": utc_now_iso(),
+        "completed_at": completed_iso,
+        "expiration_date": expiration_iso,
+        "proof_text": f"{status} on {completed_raw}" if completed_raw else status,
+        "source": "APS Security Training Import",
     }
 
 
-def parse_date_to_iso(value: str) -> str:
-    s = str(value).strip()
-    try:
-        s2 = s.replace("Z", "+00:00")
-        dt = datetime.fromisoformat(s2)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone(timezone.utc).isoformat()
-    except Exception:
-        pass
-
-    fmts = [
+def parse_date_to_iso(value):
+    formats = [
+        "%b %d %Y",
         "%m/%d/%Y",
-        "%m/%d/%Y %H:%M",
-        "%m/%d/%Y %H:%M:%S",
         "%Y-%m-%d",
-        "%Y-%m-%d %H:%M",
-        "%Y-%m-%d %H:%M:%S",
     ]
-    for fmt in fmts:
+
+    for fmt in formats:
         try:
-            dt = datetime.strptime(s, fmt).replace(tzinfo=timezone.utc)
-            return dt.isoformat()
+            dt = datetime.strptime(value.strip(), fmt)
+            return dt.replace(tzinfo=timezone.utc).isoformat()
         except Exception:
             continue
 

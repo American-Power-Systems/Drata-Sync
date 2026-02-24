@@ -1,0 +1,157 @@
+Perfect — we’re going to handle this cleanly and automatically.
+
+We’ll import this exactly as:
+
+* `employee_email`
+* `status`
+* `completed_at`
+* `expiration_date`
+* `training_name = "APS Security Awareness Training"`
+
+---
+
+# Step 1 — Create a CSV File
+
+In Replit:
+
+Create a new file named:
+
+```
+training_completions.csv
+```
+
+Paste this at the top:
+
+```
+employee_name,employee_email,status,completed_at,expiration_date
+```
+
+Then paste all the records in CSV format like this example:
+
+```
+Cliff Taylor,clifftaylor@ampowersys.com,Completed,Jun 23 2025,Jun 23 2026
+Aydan Jordan,aydanjordan@ampowersys.com,Completed,Jun 27 2025,Jun 27 2026
+Michelle Woolley,michellewoolley@ampowersys.com,Completed,Jun 20 2025,Jun 20 2026
+Ben Gillihan,bengillihan@ampowersys.com,Completed,Jun 20 2025,Jun 20 2026
+...
+```
+
+(Remove commas inside dates — use `Jun 23 2025` not `Jun 23, 2025`)
+
+---
+
+# Step 2 — Update `normalize_record()` (Important)
+
+Replace your entire `normalize_record()` function with this version:
+
+```python
+def normalize_record(rec):
+    email = rec.get("employee_email", "").strip().lower()
+    if not email:
+        raise ValueError("Missing employee_email")
+
+    status = rec.get("status", "").strip()
+    completed_raw = rec.get("completed_at", "").strip()
+    expiration_raw = rec.get("expiration_date", "").strip()
+
+    completed_iso = None
+    if completed_raw and completed_raw != "-":
+        completed_iso = parse_date_to_iso(completed_raw)
+
+    expiration_iso = None
+    if expiration_raw and expiration_raw != "-":
+        expiration_iso = parse_date_to_iso(expiration_raw)
+
+    return {
+        "employee_email": email,
+        "employee_name": rec.get("employee_name", ""),
+        "training_name": "APS Security Awareness Training",
+        "status": status,
+        "completed_at": completed_iso,
+        "expiration_date": expiration_iso,
+        "proof_text": f"{status} on {completed_raw}" if completed_raw else status,
+        "source": "APS Security Training Import"
+    }
+```
+
+---
+
+# Step 3 — Update Date Parser
+
+Replace `parse_date_to_iso()` with this improved version (handles `Jun 23 2025`):
+
+```python
+def parse_date_to_iso(value):
+    from datetime import datetime, timezone
+
+    formats = [
+        "%b %d %Y",
+        "%m/%d/%Y",
+        "%Y-%m-%d",
+    ]
+
+    for fmt in formats:
+        try:
+            dt = datetime.strptime(value.strip(), fmt)
+            return dt.replace(tzinfo=timezone.utc).isoformat()
+        except Exception:
+            continue
+
+    raise ValueError(f"Unrecognized date format: {value}")
+```
+
+---
+
+# Step 4 — Run Sync
+
+After saving:
+
+Start server:
+
+```
+python main.py
+```
+
+Then POST to:
+
+```
+POST /sync
+{
+  "use_csv": true
+}
+```
+
+---
+
+# What This Will Send to Drata
+
+Each record will look like:
+
+```json
+{
+  "employee_email": "clifftaylor@ampowersys.com",
+  "employee_name": "Cliff Taylor",
+  "training_name": "APS Security Awareness Training",
+  "status": "Completed",
+  "completed_at": "2025-06-23T00:00:00+00:00",
+  "expiration_date": "2026-06-23T00:00:00+00:00",
+  "proof_text": "Completed on Jun 23 2025",
+  "source": "APS Security Training Import"
+}
+```
+
+That satisfies:
+
+* Employee email
+* Completion proof
+* Completion date
+* Expiration tracking
+* Evidence text
+
+---
+
+# Next Step
+
+Create the `training_completions.csv` file and paste at least 3 records in it.
+
+Then tell me when it’s saved — and we’ll run the first real sync to Drata.
