@@ -58,13 +58,17 @@ def normalize_record(rec):
     if expiration_raw and expiration_raw != "-":
         expiration_iso = parse_date_to_iso(expiration_raw)
 
+    employee_name = rec.get("employee_name", "").strip()
+
     return {
         "employee_email": email,
-        "employee_name": rec.get("employee_name", ""),
+        "displayName": employee_name,
+        "employee_name": employee_name,
         "training_name": "APS Security Awareness Training",
         "status": status,
         "completed_at": completed_iso,
         "expiration_date": expiration_iso,
+        "proof_url": rec.get("proof_url", "").strip() if rec.get("proof_url") else "",
         "proof_text": f"{status} on {completed_raw}" if completed_raw else status,
         "source": "APS Security Training Import",
     }
@@ -154,6 +158,18 @@ def drata_headers() -> Dict[str, str]:
     }
 
 
+def build_drata_payload(rec: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "employee_email": rec["employee_email"],
+        "displayName": rec.get("displayName", rec.get("employee_name", "")),
+        "employee_name": rec.get("employee_name", ""),
+        "training_name": rec["training_name"],
+        "completed_at": rec.get("completed_at") or "",
+        "status": rec.get("status", ""),
+        "proof_url": rec.get("proof_url", ""),
+    }
+
+
 def push_to_drata_custom_connection(records: List[Dict[str, Any]]) -> Dict[str, Any]:
     if not DRATA_WORKSPACE_ID or not DRATA_DATASOURCE_ID:
         return {
@@ -162,9 +178,10 @@ def push_to_drata_custom_connection(records: List[Dict[str, Any]]) -> Dict[str, 
             "sent": 0,
         }
 
-    url = f"{DRATA_BASE_URL}/v1/workspaces/{DRATA_WORKSPACE_ID}/custom-connections/{DRATA_DATASOURCE_ID}/records"
+    url = f"{DRATA_BASE_URL}/public/custom-connections/{DRATA_DATASOURCE_ID}/sync"
 
-    payload = {"records": records}
+    drata_records = [build_drata_payload(r) for r in records]
+    payload = {"data": drata_records}
 
     r = requests.post(url, headers=drata_headers(), data=json.dumps(payload), timeout=60)
     if r.status_code >= 300:
